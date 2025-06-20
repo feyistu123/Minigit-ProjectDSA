@@ -5,7 +5,10 @@
 #include <ctime>     //for time
 #include <vector>
 #include <map>
-
+#include <set>
+#include <sstream>
+#include <functional>
+using namespace std;
 
 // Data Structures 
 struct Blob {
@@ -20,6 +23,31 @@ struct CommitNode {
     CommitNode* parent = nullptr;
     string hash;
 };
+struct Branch {
+    string name;
+    CommitNode* head;
+};
+// Globals 
+map<string, Branch> branches;
+Branch* currentBranch = nullptr;
+vector<string> stagedFiles;
+
+// Helpers 
+string getCurrentTime() {
+    time_t now = time(0);
+    char* dt = ctime(&now);
+    string result(dt);
+    result.pop_back(); // Remove newline
+    return result;
+}
+
+string readFile(const string& filename) {
+    ifstream in(filename.c_str());
+    if (!in) return "";
+    stringstream buffer;
+    buffer << in.rdbuf();
+    return buffer.str();
+}
 
 void writeBlob(const string& content, const string& hash) {
     string path = ".minigit\\blobs\\" + hash;
@@ -33,6 +61,17 @@ string readBlob(const string& hash) {
     stringstream buffer;
     buffer << in.rdbuf();
     return buffer.str();
+}
+string computeHash(const string& content) {
+    return to_string(hash<string>{}(content));
+}
+
+string generateHash(const CommitNode* node) {
+    stringstream ss;
+    ss << node->timestamp << node->message;
+    for (auto& file : node->files)
+        ss << file.first << file.second.hash;
+    return computeHash(ss.str());
 }
 
  // Commands
@@ -62,7 +101,159 @@ void add(string filename) {
     stagedFiles.push_back(filename);
     cout << "Staged: " << filename << "\n";
 }
+void commit(string message) {
+    if (stagedFiles.empty()) {
+        cout << "Nothing to commit.\n";
+        return;
+    }
 
+    CommitNode* newCommit = new CommitNode();
+    newCommit->message = message;
+    newCommit->timestamp = getCurrentTime();
+    newCommit->parent = currentBranch->head;
+
+    // Copy parent files
+    if (newCommit->parent && !newCommit->parent->files.empty()) {
+        newCommit->files = newCommit->parent->files;
+    }
+
+    for (string fname : stagedFiles) {
+        string content = readFile(fname);
+        string hash = computeHash(content);
+        writeBlob(content, hash);
+        Blob blob = { hash, content };
+
+        bool updated = false;
+        for (auto& file : newCommit->files) {
+            if (file.first == fname) {
+                file.second = blob;
+                updated = true;
+                break;
+            }
+        }
+        if (!updated)
+            newCommit->files.push_back({ fname, blob });
+
+        cout << "[Blob saved] " << fname << " → " << hash << "\n";
+    }
+
+    newCommit->hash = generateHash(newCommit);
+    currentBranch->head = newCommit;
+    stagedFiles.clear();
+    cout << "Committed: " << message << "\n";
+}
+void log() {
+    CommitNode* current = currentBranch->head;
+    while (current) {
+        cout << "Commit hash: " << current->hash << "\n";
+        cout << "Time: " << current->timestamp << "\n";
+        cout << "Message: " << current->message << "\n\n";
+        current = current->parent;
+    }
+}
+void branch(string name) {
+    if (branches.count(name)) {
+        cout << "Branch already exists.\n";
+        return;
+    }
+    Branch newBranch;
+    newBranch.name = name;
+    newBranch.head = currentBranch->head;
+    branches[name] = newBranch;
+    cout << "Branch '" << name << "' created.\n";
+}
+
+void checkout(string name) {
+    if (!branches.count(name)) {
+        cout << "Branch not found.\n";
+        return;
+    }
+    currentBranch = &branches[name];
+    cout << "Switched to branch: " << name << "\n";
+
+    for (auto& file : currentBranch->head->files) {
+        ofstream out(file.first.c_str());
+        out << readBlob(file.second.hash);
+    }
+}
+void merge(string otherBranchName) {
+    if (!branches.count(otherBranchName)) {
+        cout << "Branch not found.\n";
+        return;
+    }
+
+    if (!currentBranch || !currentBranch->head) {
+        cout << "Error: current branch not initialized.\n";
+        return;
+    }
+
+    CommitNode* source = branches[otherBranchName].head;
+    CommitNode* target = currentBranch->head;
+
+    if (!source || !target) {
+        cout << "Error: One of the branches has no commits.\n";
+        return;
+    }
+
+    map<string, Blob> merged;
+
+    // Load target (current branch) files into merged
+    for (auto& f : target->files) {
+        merged[f.first] = f.second;
+    }
+
+    // Merge in files from source branch
+    for (auto& f : source->files) {
+        if (!merged.count(f.first)) {
+            // File only in source
+            merged[f.first] = f.second;
+        } else if (merged[f.first].hash != f.second.hash) {
+            // Conflict detected
+            cout << "Conflict in file: " << f.first << "\n";
+
+            string currentContent = readBlob(merged[f.first].hash);
+            string sourceContent = readBlob(f.second.hash);
+
+            string conflictContent =
+                "<<<<<<< CURRENT\n" + currentContent +
+                "=======\n" + sourceContent +
+                ">>>>>>> TARGET\n";
+
+            Blob conflictBlob;
+            conflictBlob.content = conflictContent;
+            conflictBlob.hash = computeHash(conflictContent);
+
+            writeBlob(conflictContent, conflictBlob.hash);
+
+            merged[f.first] = conflictBlob;
+        }
+    }
+    // Create merged commit
+    CommitNode* mergedCommit = new CommitNode();
+    mergedCommit->message = "Merged branch " + otherBranchName + " into " + currentBranch->name;
+    mergedCommit->timestamp = getCurrentTime();
+    mergedCommit->parent = currentBranch->head;
+
+    for (auto& p : merged) {
+        mergedCommit->files.push_back(make_pair(p.first, p.second));
+    }
+
+    mergedCommit->hash = generateHash(mergedCommit);
+    currentBranch->head = mergedCommit;
+
+    // Write merged files to working directory
+    for (auto& f : merged) {
+        ofstream out(f.first.c_str());
+        if (out) {
+            out << readBlob(f.second.hash);
+            out.close();
+        } else {
+            cout << "Warning: Couldn't write merged file: " << f.first << "\n";
+        }
+    }
+
+    cout << "Merge complete. Conflicts (if any) marked in files.\n";
+}
 
 // Main Loop 
 int main() {
@@ -79,5 +270,25 @@ int main() {
             add(fname);
 
   }
+else if (command == "commit") {
+            string msg;
+            getline(cin >> ws, msg);
+            commit(msg);
+        } else if (command == "log") {
+            log();
+        } else if (command == "branch") {
+            string bname;
+            cin >> bname;
+            branch(bname);
+        } else if (command == "checkout") {
+            string bname;
+            cin >> bname;
+            checkout(bname);
+}
+         else if (command == "merge") {
+            string other;
+            cin >> other;
+            merge(other);
+        }
     return 0;
 }
