@@ -14,7 +14,8 @@ A lightweight Git-like version control system implemented in C++.
 - diff — Show line-by-line file changes between two commits
 
 
-.minigit/ ├── blobs/         # Stores file contents (blobs) by hash └── (in memory)    # Commit and branch data stored during runtime
+.minigit/ ├── blobs/         # Stores file contents (blobs) by hash └── (in memory)   
+# Commit and branch data stored during runtime
 
 >> How to Compile & Run
 
