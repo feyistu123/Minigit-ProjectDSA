@@ -254,6 +254,72 @@ void merge(string otherBranchName) {
 
     cout << "Merge complete. Conflicts (if any) marked in files.\n";
 }
+void diff(string hash1, string hash2) {
+    CommitNode* commit1 = nullptr;
+    CommitNode* commit2 = nullptr;
+
+    // Find commits by hash
+    for (map<string, Branch>::iterator it = branches.begin(); it != branches.end(); ++it) {
+        CommitNode* current = it->second.head;
+        while (current) {
+            if (current->hash == hash1) commit1 = current;
+            if (current->hash == hash2) commit2 = current;
+            current = current->parent;
+        }
+    }
+
+    if (!commit1 || !commit2) {
+        cout << "One or both commit hashes not found.\n";
+        return;
+    }
+
+    map<string, string> files1, files2;
+    for (size_t i = 0; i < commit1->files.size(); ++i) {
+        files1[commit1->files[i].first] = commit1->files[i].second.hash;
+    }
+    for (size_t i = 0; i < commit2->files.size(); ++i) {
+        files2[commit2->files[i].first] = commit2->files[i].second.hash;
+    }
+    set<string> allFiles;
+    for (map<string, string>::iterator it = files1.begin(); it != files1.end(); ++it)
+        allFiles.insert(it->first);
+    for (map<string, string>::iterator it = files2.begin(); it != files2.end(); ++it)
+        allFiles.insert(it->first);
+
+    for (set<string>::iterator it = allFiles.begin(); it != allFiles.end(); ++it) {
+        string fname = *it;
+        string blob1 = files1.count(fname) ? readBlob(files1[fname]) : "";
+        string blob2 = files2.count(fname) ? readBlob(files2[fname]) : "";
+
+        if (blob1 == blob2) continue;
+
+        cout << "Differences in file: " << fname << "\n";
+
+        stringstream ss1(blob1), ss2(blob2);
+        string line1, line2;
+        int lineNum = 1;
+
+        while (getline(ss1, line1) && getline(ss2, line2)) {
+            if (line1 != line2) {
+                cout << "Line " << lineNum << ":\n";
+                cout << "- " << line1 << "\n";
+                cout << "+ " << line2 << "\n";
+            }
+            ++lineNum;
+        }
+
+        while (getline(ss1, line1)) {
+            cout << "Line " << lineNum++ << ":\n";
+            cout << "- " << line1 << "\n";
+        }
+
+        while (getline(ss2, line2)) {
+            cout << "Line " << lineNum++ << ":\n";
+            cout << "+ " << line2 << "\n";
+        }
+        cout << "---------------------------\n";
+    }
+}
 
 // Main Loop 
 int main() {
@@ -268,9 +334,7 @@ int main() {
             string fname;
             cin >> fname;
             add(fname);
-
-  }
-else if (command == "commit") {
+        } else if (command == "commit") {
             string msg;
             getline(cin >> ws, msg);
             commit(msg);
@@ -284,11 +348,19 @@ else if (command == "commit") {
             string bname;
             cin >> bname;
             checkout(bname);
-}
-         else if (command == "merge") {
+        } else if (command == "merge") {
             string other;
             cin >> other;
             merge(other);
+        } else if (command == "diff") {
+            string h1, h2;
+            cin >> h1 >> h2;
+            diff(h1, h2);
+        } else if (command == "exit") {
+            break;
+        } else {
+            cout << "Unknown command.\n";
         }
+    }
     return 0;
 }
