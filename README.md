@@ -22,5 +22,5 @@ g++ -std=c++11 -o minigit minigit.cpp
 .\minigit
 
 >> Author
-Feyistu Endale
-Aster Regasa
+-Feyistu Endale
+-Aster Regasa
